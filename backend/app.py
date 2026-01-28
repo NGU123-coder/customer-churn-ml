@@ -1,49 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import pickle
+import numpy as np
 
 app = FastAPI(title="Customer Churn Prediction API")
 
-# =========================
-# LOAD MODEL & ENCODERS
-# =========================
-
-with open("customer_churn_model.pkl", "rb") as f:
-    model = pickle.load(f)
+# ---------------- LOAD ARTIFACTS ---------------- #
 
 with open("encoders.pkl", "rb") as f:
     encoders = pickle.load(f)
 
-# =========================
-# FEATURE ORDER (MUST MATCH TRAINING)
-# =========================
+with open("customer_churn_model.pkl", "rb") as f:
+    model_data = pickle.load(f)
+    model = model_data["model"]
+    feature_names = model_data["features_names"]
 
-FEATURE_ORDER = [
-    "gender",
-    "SeniorCitizen",
-    "Partner",
-    "Dependents",
-    "tenure",
-    "PhoneService",
-    "MultipleLines",
-    "InternetService",
-    "OnlineSecurity",
-    "OnlineBackup",
-    "DeviceProtection",
-    "TechSupport",
-    "StreamingTV",
-    "StreamingMovies",
-    "Contract",
-    "PaperlessBilling",
-    "PaymentMethod",
-    "MonthlyCharges",
-    "TotalCharges"
-]
-
-# =========================
-# INPUT SCHEMA
-# =========================
+# ---------------- INPUT SCHEMA ---------------- #
 
 class CustomerData(BaseModel):
     gender: str
@@ -66,9 +39,7 @@ class CustomerData(BaseModel):
     MonthlyCharges: float
     TotalCharges: float
 
-# =========================
-# ROUTES
-# =========================
+# ---------------- ROUTES ---------------- #
 
 @app.get("/")
 def home():
@@ -76,33 +47,38 @@ def home():
 
 @app.post("/predict")
 def predict(data: CustomerData):
+    try:
+        # Convert input to DataFrame
+        df = pd.DataFrame([data.dict()])
 
-    input_dict = data.dict()
+        # Apply encoders
+        for col, encoder in encoders.items():
+            if col in df.columns:
+                val = df.at[0, col]
+                if val in encoder.classes_:
+                    df[col] = encoder.transform([val])
+                else:
+                    df[col] = encoder.transform([encoder.classes_[0]])
 
-    # Apply encoders
-    for column, encoder in encoders.items():
-        value = input_dict[column]
+        # Add missing columns (VERY IMPORTANT)
+        for col in feature_names:
+            if col not in df.columns:
+                df[col] = 0
 
-        if value in encoder.classes_:
-            input_dict[column] = encoder.transform([value])[0]
-        else:
-            # fallback for unseen category
-            input_dict[column] = encoder.transform([encoder.classes_[0]])[0]
+        # Keep only trained features in correct order
+        df = df[feature_names]
 
-    # Create DataFrame in correct order
-    df = pd.DataFrame(
-        [[input_dict[col] for col in FEATURE_ORDER]],
-        columns=FEATURE_ORDER
-    )
+        # Ensure numeric
+        df = df.astype(float)
 
-    # Ensure numeric dtype
-    df = df.astype(float)
+        # Predict
+        pred = model.predict(df)[0]
+        prob = model.predict_proba(df)[0].max()
 
-    # Predict
-    prediction = model.predict(df)[0]
-    probability = model.predict_proba(df)[0][1]
+        return {
+            "churn": "Yes" if int(pred) == 1 else "No",
+            "confidence": round(float(prob) * 100, 2)
+        }
 
-    return {
-        "churn_prediction": "Yes" if int(prediction) == 1 else "No",
-        "churn_probability": round(float(probability), 3)
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
