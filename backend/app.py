@@ -2,11 +2,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import pickle
-import numpy as np
 
 app = FastAPI(title="Customer Churn Prediction API")
 
-# ---------------- LOAD ARTIFACTS ---------------- #
+# ---------------- LOAD FILES ----------------
 
 with open("encoders.pkl", "rb") as f:
     encoders = pickle.load(f)
@@ -16,7 +15,7 @@ with open("customer_churn_model.pkl", "rb") as f:
     model = model_data["model"]
     feature_names = model_data["features_names"]
 
-# ---------------- INPUT SCHEMA ---------------- #
+# ---------------- INPUT SCHEMA ----------------
 
 class CustomerData(BaseModel):
     gender: str
@@ -39,7 +38,7 @@ class CustomerData(BaseModel):
     MonthlyCharges: float
     TotalCharges: float
 
-# ---------------- ROUTES ---------------- #
+# ---------------- ROUTES ----------------
 
 @app.get("/")
 def home():
@@ -48,27 +47,22 @@ def home():
 @app.post("/predict")
 def predict(data: CustomerData):
     try:
-        # Convert input to DataFrame
-        df = pd.DataFrame([data.dict()])
+        # Convert request to DataFrame WITH column names
+        df = pd.DataFrame([data.model_dump()])
 
         # Apply encoders
         for col, encoder in encoders.items():
             if col in df.columns:
-                val = df.at[0, col]
-                if val in encoder.classes_:
-                    df[col] = encoder.transform([val])
+                value = df[col].iloc[0]
+                if value in encoder.classes_:
+                    df[col] = encoder.transform([value])
                 else:
                     df[col] = encoder.transform([encoder.classes_[0]])
 
-        # Add missing columns (VERY IMPORTANT)
-        for col in feature_names:
-            if col not in df.columns:
-                df[col] = 0
+        # 🔴 CRITICAL LINE (THIS FIXES YOUR ERROR)
+        df = df.reindex(columns=feature_names)
 
-        # Keep only trained features in correct order
-        df = df[feature_names]
-
-        # Ensure numeric
+        # Convert to numeric
         df = df.astype(float)
 
         # Predict
