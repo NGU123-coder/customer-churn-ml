@@ -1,21 +1,19 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 import pandas as pd
 import pickle
 
 app = FastAPI(title="Customer Churn Prediction API")
 
-# ---------------- LOAD FILES ----------------
-
+# Load encoders
 with open("encoders.pkl", "rb") as f:
     encoders = pickle.load(f)
 
+# Load model + feature names
 with open("customer_churn_model.pkl", "rb") as f:
     model_data = pickle.load(f)
     model = model_data["model"]
     feature_names = model_data["features_names"]
-
-# ---------------- INPUT SCHEMA ----------------
 
 class CustomerData(BaseModel):
     gender: str
@@ -38,41 +36,36 @@ class CustomerData(BaseModel):
     MonthlyCharges: float
     TotalCharges: float
 
-# ---------------- ROUTES ----------------
-
 @app.get("/")
 def home():
     return {"status": "Customer Churn API is running 🚀"}
 
 @app.post("/predict")
 def predict(data: CustomerData):
-    try:
-        # Convert request to DataFrame WITH column names
-        df = pd.DataFrame([data.model_dump()])
 
-        # Apply encoders
-        for col, encoder in encoders.items():
-            if col in df.columns:
-                value = df[col].iloc[0]
-                if value in encoder.classes_:
-                    df[col] = encoder.transform([value])
-                else:
-                    df[col] = encoder.transform([encoder.classes_[0]])
+    # Convert input JSON to DataFrame
+    df = pd.DataFrame([data.dict()])
 
-        # 🔴 CRITICAL LINE (THIS FIXES YOUR ERROR)
-        df = df.reindex(columns=feature_names)
+    # Encode categorical columns
+    for column, encoder in encoders.items():
+        if column in df.columns:
+            value = df[column].iloc[0]
+            if value in encoder.classes_:
+                df[column] = encoder.transform([value])
+            else:
+                df[column] = encoder.transform([encoder.classes_[0]])
 
-        # Convert to numeric
-        df = df.astype(float)
+    # Ensure correct column order
+    df = df[feature_names]
 
-        # Predict
-        pred = model.predict(df)[0]
-        prob = model.predict_proba(df)[0].max()
+    # Convert to float
+    df = df.astype(float)
 
-        return {
-            "churn": "Yes" if int(pred) == 1 else "No",
-            "confidence": round(float(prob) * 100, 2)
-        }
+    # Predict
+    prediction = model.predict(df)[0]
+    probability = model.predict_proba(df)[0]
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "churn": "Yes" if int(prediction) == 1 else "No",
+        "confidence": round(float(max(probability)) * 100, 2)
+    }
