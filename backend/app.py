@@ -5,15 +5,45 @@ import pickle
 
 app = FastAPI(title="Customer Churn Prediction API")
 
-# Load encoders
+# =========================
+# LOAD MODEL & ENCODERS
+# =========================
+
+with open("customer_churn_model.pkl", "rb") as f:
+    model = pickle.load(f)
+
 with open("encoders.pkl", "rb") as f:
     encoders = pickle.load(f)
 
-# Load model + feature names
-with open("customer_churn_model.pkl", "rb") as f:
-    model_data = pickle.load(f)
-    model = model_data["model"]
-    feature_names = model_data["features_names"]
+# =========================
+# FEATURE ORDER (MUST MATCH TRAINING)
+# =========================
+
+FEATURE_ORDER = [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+]
+
+# =========================
+# INPUT SCHEMA
+# =========================
 
 class CustomerData(BaseModel):
     gender: str
@@ -36,6 +66,10 @@ class CustomerData(BaseModel):
     MonthlyCharges: float
     TotalCharges: float
 
+# =========================
+# ROUTES
+# =========================
+
 @app.get("/")
 def home():
     return {"status": "Customer Churn API is running 🚀"}
@@ -43,31 +77,32 @@ def home():
 @app.post("/predict")
 def predict(data: CustomerData):
 
-    # Convert input JSON to DataFrame
-    df = pd.DataFrame([data.dict()])
+    input_dict = data.dict()
 
-    # Apply label encoders safely
+    # Apply encoders
     for column, encoder in encoders.items():
-        if column in df.columns:
-            value = df[column].iloc[0]
+        value = input_dict[column]
 
-            if value in encoder.classes_:
-                df[column] = encoder.transform([value])
-            else:
-                # fallback for unseen category
-                df[column] = encoder.transform([encoder.classes_[0]])
+        if value in encoder.classes_:
+            input_dict[column] = encoder.transform([value])[0]
+        else:
+            # fallback for unseen category
+            input_dict[column] = encoder.transform([encoder.classes_[0]])[0]
 
-    # Ensure feature order matches training
-    df = df[feature_names]
+    # Create DataFrame in correct order
+    df = pd.DataFrame(
+        [[input_dict[col] for col in FEATURE_ORDER]],
+        columns=FEATURE_ORDER
+    )
 
-    # XGBoost expects numeric float input
+    # Ensure numeric dtype
     df = df.astype(float)
 
-    # Make prediction
-    prediction = model.predict(df)
-    probability = model.predict_proba(df)
+    # Predict
+    prediction = model.predict(df)[0]
+    probability = model.predict_proba(df)[0][1]
 
     return {
-        "churn": "Yes" if int(prediction[0]) == 1 else "No",
-        "confidence": round(float(max(probability[0])) * 100, 2)
+        "churn_prediction": "Yes" if int(prediction) == 1 else "No",
+        "churn_probability": round(float(probability), 3)
     }
