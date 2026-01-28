@@ -39,33 +39,40 @@ class CustomerData(BaseModel):
 @app.get("/")
 def home():
     return {"status": "Customer Churn API is running 🚀"}
-
 @app.post("/predict")
 def predict(data: CustomerData):
 
-    # Convert input JSON to DataFrame
+    # Convert input to DataFrame
     df = pd.DataFrame([data.dict()])
 
-    # Encode categorical columns
-    for column, encoder in encoders.items():
-        if column in df.columns:
-            value = df[column].iloc[0]
-            if value in encoder.classes_:
-                df[column] = encoder.transform([value])
-            else:
-                df[column] = encoder.transform([encoder.classes_[0]])
+    # Apply encoders safely
+    for col, encoder in encoders.items():
+        if col in df.columns:
+            val = df[col].iloc[0]
 
-    # Ensure correct column order
+            # Handle unseen categories safely
+            if val not in encoder.classes_:
+                val = encoder.classes_[0]
+
+            df[col] = encoder.transform([val])
+
+    # Add missing features (VERY IMPORTANT)
+    for col in feature_names:
+        if col not in df.columns:
+            df[col] = 0
+
+    # Reorder columns exactly as training
     df = df[feature_names]
 
-    # Convert to float
+    # Ensure numeric
     df = df.astype(float)
 
     # Predict
-    prediction = model.predict(df)[0]
-    probability = model.predict_proba(df)[0]
+    pred = model.predict(df)[0]
+    prob = model.predict_proba(df)[0]
 
     return {
-        "churn": "Yes" if int(prediction) == 1 else "No",
-        "confidence": round(float(max(probability)) * 100, 2)
+        "churn": "Yes" if int(pred) == 1 else "No",
+        "confidence": round(float(max(prob)) * 100, 2)
     }
+
